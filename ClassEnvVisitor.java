@@ -107,9 +107,10 @@ public class ClassEnvVisitor extends SemanticVisitor {
                             node.getType(), node.getName()));
             validField = false;
         }
-        if (node.getInit() == null) {
+        if (validField) {
             varSymbolTable.add(node.getName(), node.getType());
             varSymbolTable.add("this."+node.getName(), node.getType());
+            // System.out.println(node.getLineNum()+" "+varSymbolTable);
         }
         return null;
     }
@@ -164,10 +165,10 @@ public class ClassEnvVisitor extends SemanticVisitor {
         while (stmtIter.hasNext()) {
             var stmt = stmtIter.next();
             if (!classMap.get(className).isBuiltIn()) {
-                if (!stmtIter.hasNext()) {
+                if (stmt instanceof ReturnStmt) {
                     var returnStmt = (ReturnStmt) stmt;
                     if (returnStmt.getExpr() == null && !node.getReturnType().equals("void")
-                            && !node.getName().equals("main")) {
+                            && !node.getName().equals("main") && !validMethod) {
                         errorHandler.register(2, fileName, node.getLineNum(),
                                 String.format(
                                         "declared return type of method '%s' is '%s' but method body"
