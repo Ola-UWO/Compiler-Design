@@ -351,13 +351,15 @@ public class SemanticAnalyzer {
 		}
 		var mainCTN = classMap.get("Main");
 		if (mainCTN != null) {
-			if (mainCTN.getMethodSymbolTable().getCurrScopeSize() == 0) {
+			var mainMST = mainCTN.getMethodSymbolTable();
+			
+			if (mainMST.peek("main") == null) {
 				errorHandler.register(2, mainCTN.getASTNode().getFilename(),
 						mainCTN.getASTNode().getLineNum(),
 						"no 'main' method defined in the 'Main' class.");
 			} else {
 				var mainMethod = (Method) mainCTN.getMethodSymbolTable().peek("main");
-				if (mainMethod.getFormalList() != null) {
+				if (mainMethod.getFormalList().getSize() != 0) {
 					errorHandler.register(2, mainCTN.getASTNode().getFilename(),
 							mainMethod.getLineNum(),
 							String.format("'main' method in class 'Main' cannot take arguments"));
@@ -373,12 +375,6 @@ public class SemanticAnalyzer {
 									mainMethod.getLineNum(),
 									String.format(
 											"'main' method in class 'Main' must be void"));
-							errorHandler.register(2, mainCTN.getASTNode().getFilename(),
-									returnStmt.getLineNum(),
-									String.format(
-											"return type 'void' is not compatible with " +
-													"declared return type '%s' in method 'main'",
-											mainMethod.getReturnType()));
 						}
 					}
 				}
@@ -398,3 +394,4 @@ public class SemanticAnalyzer {
 		}
 	}
 }
+
