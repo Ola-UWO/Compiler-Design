@@ -5,7 +5,6 @@ import ast.*;
 import util.*;
 
 public class TypeCheckVisitor extends SemanticVisitor {
-
     ErrorHandler errorHandler;
     Hashtable<String, ClassTreeNode> classMap;
     private SymbolTable varSymbolTable;
@@ -14,6 +13,8 @@ public class TypeCheckVisitor extends SemanticVisitor {
     String className;
     Method currentMethod = null;
     Field currentField = null;
+    boolean withinLoop = false;
+
     // String currentMethodName;
 
     TypeCheckVisitor(ErrorHandler errorHandler,
@@ -45,11 +46,12 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return null
      */
     public Object visit(Field node) {
+        // System.out.println(node.getName());
         currentField = node;
         boolean validField = true;
         if (node.getInit() != null) {
-            node.getInit().accept(this);
-            String initType = node.getInit().getExprType();
+            var initType = node.getInit().accept(this);
+            // String initType = node.getInit().getExprType();
 
             if (initType != null) {
                 if (initType.equals("void")) {
@@ -58,7 +60,7 @@ public class TypeCheckVisitor extends SemanticVisitor {
                             String.format(
                                     "expression type 'void' of field '%s' cannot be void",
                                     node.getName()));
-                                    validField = false;
+                    validField = false;
                 } else if (!initType.equals(node.getType())
                         && (node.getType().equals("int")
                                 || node.getType().equals("boolean"))) {
@@ -67,14 +69,14 @@ public class TypeCheckVisitor extends SemanticVisitor {
                             String.format(
                                     "expression type '%s' of field '%s' does not match declared type '%s'",
                                     initType, node.getName(), node.getType()));
-                                    validField = false;
+                    validField = false;
                 } else if (!initType.equals(node.getType())) {
                     errorHandler.register(
                             2, fileName, node.getLineNum(),
                             String.format(
                                     "expression type '%s' of field '%s' does not conform to declared type '%s'",
                                     initType, node.getName(), node.getType()));
-                                    validField = false;
+                    validField = false;
                 }
             } else {
                 if (node.getType().equals("int")
@@ -84,12 +86,15 @@ public class TypeCheckVisitor extends SemanticVisitor {
                             String.format(
                                     "expression type '%s' of field '%s' does not match declared type '%s'",
                                     initType, node.getName(), node.getType()));
-                                    validField = false;
+                    validField = false;
                 }
+                // else if (node.getType().equals("void")) {
+
+                // }
             }
-        }
-        if (validField) {
-            varSymbolTable.add(node.getName(), node.getType());
+            if (validField) {
+                varSymbolTable.add(node.getName(), node.getType());
+            }
         }
         return null;
     }
@@ -101,10 +106,13 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(Method node) {
+        // System.out.println(node.getName());
         currentMethod = node;
         // currentMethodName = node.getName();
         node.getFormalList().accept(this);
         node.getStmtList().accept(this);
+        varSymbolTable.exitScope();
+        methodSymbolTable.exitScope();
         return null;
     }
 
@@ -115,6 +123,7 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(FormalList node) {
+        // System.out.println(node);
         varSymbolTable.enterScope();
         methodSymbolTable.enterScope();
         for (Iterator it = node.getIterator(); it.hasNext();) {
@@ -130,35 +139,36 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(Formal node) {
-        boolean validFormal = true;
+        // System.out.println(node);
+        // boolean validFormal = true;
         switch (node.getName()) {
             case "null":
                 errorHandler.register(
                         2, fileName, node.getLineNum(),
                         "formals cannot be named 'null'");
-                validFormal = false;
+                // validFormal = false;
                 break;
             case "this":
                 errorHandler.register(
                         2, fileName, node.getLineNum(),
                         "formals cannot be named 'this'");
-                validFormal = false;
+                // validFormal = false;
                 break;
             case "super":
                 errorHandler.register(
                         2, fileName, node.getLineNum(),
                         "formals cannot be named 'super'");
-                validFormal = false;
+                // validFormal = false;
                 break;
         }
-        if (varSymbolTable.peek(node.getName()) == null && validFormal) {
-            boolean undefinedType = !node.getType().equals("int")
-                    && !node.getType().equals("boolean")
-                    && !node.getType().equals("int[]")
-                    && !node.getType().equals("boolean[]")
-                    && classMap.get(node.getType()) == null;
+        if (varSymbolTable.peek(node.getName()) == null) {
+            // boolean undefinedType = !node.getType().equals("int")
+            // && !node.getType().equals("boolean")
+            // && !node.getType().equals("int[]")
+            // && !node.getType().equals("boolean[]")
+            // && classMap.get(node.getType()) == null;
 
-            if (undefinedType) {
+            if (!typeExists(node.getType())) {
                 errorHandler.register(
                         2, fileName, node.getLineNum(),
                         String.format(
@@ -168,6 +178,12 @@ public class TypeCheckVisitor extends SemanticVisitor {
             } else {
                 varSymbolTable.add(node.getName(), node.getType());
             }
+        } else {
+            errorHandler.register(
+                    2, fileName, node.getLineNum(),
+                    String.format(
+                            "formal '%s' is multiply defined",
+                            node.getName()));
         }
         return null;
     }
@@ -179,28 +195,35 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(StmtList node) {
+        // System.out.println(node);
         String returnType = "";
         for (Iterator it = node.getIterator(); it.hasNext();) {
             returnType = (String) ((Stmt) it.next()).accept(this);
         }
-        varSymbolTable.exitScope();
-        methodSymbolTable.exitScope();
-        String currentMethodName = currentMethod.getName();
-        // if (methodSymbolTable.peek(currentMethodName) != null) {
-            // methodSymbolTable.exitScope();
-            currentMethodName = currentMethod.getName();
-            // Method currentMethod = (Method) methodSymbolTable.peek(currentMethodName);
-            // System.out.println(returnType + " " + currentMethod.getReturnType());
-            // if (!typesCompatible(returnType,
-            //         currentMethod.getReturnType())) {
-            //     errorHandler.register(
-            //             2, fileName, node.getLineNum(),
-            //             String.format(
-            //                     "return type '%s' is not compatible with declared return type '%s'"
-            //                             + " in method '%s'",
-            //                     returnType, currentMethod.getReturnType(),
-            //                     currentMethodName));
-            // }
+        // System.out.println(node.getLineNum()+" "+varSymbolTable);
+        // varSymbolTable.exitScope();
+        // methodSymbolTable.exitScope();
+        // String currentMethodName = currentMethod.getName();
+        // System.out.println(node.getLineNum()+" "+varSymbolTable);
+        // System.out.println(currentMethodName + " " + node.getLineNum() + " "
+        // +methodSymbolTable);
+        // if (returnType != null && returnType.equals("void") &&
+        // methodSymbolTable.peek(currentMethodName) != null) {
+        // // methodSymbolTable.exitScope();
+        // currentMethodName = currentMethod.getName();
+        // // Method currentMethod = (Method) methodSymbolTable.peek(currentMethodName);
+        // // System.out.println(returnType + " " + currentMethod.getReturnType() + " "
+        // + node.getLineNum());
+        // if (!currentMethodName.equals("main") && !typesCompatible(returnType,
+        // currentMethod.getReturnType())) {
+        // errorHandler.register(
+        // 2, fileName, node.getLineNum(),
+        // String.format(
+        // "return type '%s' is not compatible with declared return type '%s'"
+        // + " in method '%s'",
+        // returnType, currentMethod.getReturnType(),
+        // currentMethodName));
+        // }
         // }
         return null;
     }
@@ -212,6 +235,7 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(DeclStmt node) {
+        // System.out.println(node);
         var returnedType = node.getInit().accept(this);
         // System.out.println(returnedType);
         boolean validVar = true;
@@ -236,53 +260,66 @@ public class TypeCheckVisitor extends SemanticVisitor {
                 break;
         }
         // System.out.println(className + " " + varSymbolTable);
-        if (varSymbolTable.peek(node.getName()) != null) {
+        if (methodSymbolTable.lookup(node.getName()) != null || varSymbolTable.peek(node.getName()) != null) {
             errorHandler.register(
                     2, fileName, node.getLineNum(),
                     String.format(
-                            "variable '%s' is already defined in method '%s'",
+                            "variable '%s' is already defined in method %s",
                             node.getName(), currentMethod.getName()));
             validVar = false;
         }
-        boolean undefined = !node.getType().equals("int")
-                && !node.getType().equals("boolean")
-                && !node.getType().equals("int[]")
-                && !node.getType().equals("boolean[]")
-                && classMap.get(node.getType()) == null;
-        if (undefined) {
+        var type = node.getType();
+        if (!typeExists(type)) {
             errorHandler.register(
                     2, fileName, node.getLineNum(),
                     String.format(
-                            "type '%s' of variable '%s' is undefined",
+                            "type '%s' of declaration '%s' is undefined",
                             node.getType(), node.getName()));
-            validVar = false;
+            type = "Object";
+            // validVar = false;
         }
-        // if (!node.getType().equals(node.getInit().getExprType())) {
-        //     errorHandler.register(
-        //             2, fileName, node.getLineNum(),
-        //             String.format(
-        //                     "expression type '%s' of declaration '%s' does not match"
-        //                             + " declared type '%s'",
-        //                     node.getInit().getExprType(), node.getName(), node.getType()));
-        //     validVar = false;
-        // }
+        // System.out.println(className+" "+type+" "+returnedType+ "
+        // "+node.getLineNum()+" "+(!isPrimitive(type) &&
+        // !typesCompatible(returnedType.toString(), type)));
+        if (!isPrimitive(type) && !isPrimitive(returnedType.toString())
+                && !typesCompatible(returnedType.toString(), type)) {
+            errorHandler.register(
+                    2, fileName, node.getLineNum(),
+                    String.format(
+                            "expression type '%s' of declaration '%s' does not conform"
+                                    + " to declared type '%s'",
+                            returnedType, node.getName(), type));
+            // validVar = false;
+        } else {
+            if (!type.equals(returnedType)) {
+                errorHandler.register(
+                        2, fileName, node.getLineNum(),
+                        String.format(
+                                "expression type '%s' of declaration '%s' does not match"
+                                        + " declared type '%s'",
+                                returnedType, node.getName(), type));
+                // validVar = false;
+            }
+
+        }
         // if (validVar) {
-        //     System.out.println(returnedType);
-        // }
         // System.out.println(returnedType);
+        // }
         // System.out.println("This is a decl");
         if (validVar) {
-            varSymbolTable.add(node.getName(),
-                    node.getType());
+            methodSymbolTable.add(node.getName(),
+                    type);
         }
         return null;
+
     }
 
     /**
      * Visit an expression statement node
      */
     public Object visit(ExprStmt node) {
-        
+        // System.out.println("In exprStmt:" + node.getLineNum() +
+        // node.getExpr().getExprType());
         node.getExpr().accept(this);
         if (!(node.getExpr() instanceof AssignExpr
                 || node.getExpr() instanceof ArrayAssignExpr
@@ -303,13 +340,15 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(IfStmt node) {
-        node.getPredExpr().accept(this);
-        if (node.getPredExpr().getExprType().equals("boolean")) {
+        // varSymbolTable.enterScope();
+        var type = node.getPredExpr().accept(this);
+        if (!type.equals("boolean")) {
             errorHandler.register(2, fileName, node.getLineNum(),
                     String.format("predicate in if-statement does not have type boolean"));
         }
         node.getThenStmt().accept(this);
         node.getElseStmt().accept(this);
+        // varSymbolTable.exitScope();
         return null;
     }
 
@@ -320,12 +359,17 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(WhileStmt node) {
-        node.getPredExpr().accept(this);
-        if (node.getPredExpr().getExprType().equals("boolean")) {
+        withinLoop = true;
+        var type = node.getPredExpr().accept(this);
+        // System.out.println(node.getLineNum()+" "+type);
+        if (!type.equals("boolean")) {
             errorHandler.register(2, fileName, node.getLineNum(),
                     String.format("predicate in while-statement does not have type boolean"));
         }
+        // System.out.println(node.getBodyStmt());
         node.getBodyStmt().accept(this);
+        withinLoop = false;
+        // varSymbolTable.exitScope();
         return null;
     }
 
@@ -336,6 +380,8 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(ForStmt node) {
+        withinLoop = true;
+        // varSymbolTable.enterScope();
         if (node.getInitExpr() != null)
             node.getInitExpr().accept(this);
 
@@ -349,6 +395,8 @@ public class TypeCheckVisitor extends SemanticVisitor {
         if (node.getUpdateExpr() != null)
             node.getUpdateExpr().accept(this);
         node.getBodyStmt().accept(this);
+        withinLoop = false;
+        // varSymbolTable.exitScope();
         return null;
     }
 
@@ -369,10 +417,13 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(BlockStmt node) {
-        varSymbolTable.enterScope();
+        // varSymbolTable.enterScope();
+        // System.out.println(node.getLineNum() +" "+methodSymbolTable);
         methodSymbolTable.enterScope();
+        // System.out.println(node.getLineNum() +" "+methodSymbolTable);
         node.getStmtList().accept(this);
-        varSymbolTable.exitScope();
+        // varSymbolTable.exitScope();
+        // System.out.println(node.getLineNum() +" "+methodSymbolTable);
         methodSymbolTable.exitScope();
         return null;
     }
@@ -384,35 +435,50 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(ReturnStmt node) {
-
+        // System.out.println(node);
+        Object returnedType = null;
+        String declaredType = currentMethod.getReturnType();
         if (node.getExpr() != null) {
-            var returned = node.getExpr().accept(this);
-            // System.out.println(returned);
-            // System.out.println(node.getExpr());
-            String returnedType = node.getExpr().getExprType();
+            returnedType = node.getExpr().accept(this);
             
-            // System.out.println(className + " " + returnedType);
-            if (returnedType != null) {
-                varSymbolTable.peek(returnedType);
+            if (returnedType.equals("void")) {
+                errorHandler.register(2, fileName, node.getLineNum(),
+                            String.format(
+                                    "cannot return an expression of type 'void' from a method"));
                 node.getExpr().setExprType("Object");
-                return "Object";
+                returnedType = "Object";
             }
-
-            // Method currentMethod = (Method)
-            // methodSymbolTable.lookup(currentMethod.getName());
-            String declaredType = currentMethod.getReturnType();
-                System.out.println("current mtd" + currentMethod.getName() + " Decl:"+ declaredType + " return:"+ returnedType);
-            if (!typesCompatible(returnedType, declaredType)) {
+            //  System.out.println(node.getLineNum()+ " "+returnedType);
+            if (isRefType(declaredType)) {
+                // System.out.println("helloref " + node.getLineNum());
+                if (!typesConform(returnedType.toString(), declaredType)) {
+                    errorHandler.register(2, fileName, node.getLineNum(),
+                            String.format(
+                                    "return type '%s' does not conform to declared return type "
+                                            + "'%s' in method '%s'",
+                                    returnedType, declaredType, currentMethod.getName()));
+                }
+            } else if (!typesCompatible(returnedType.toString(), declaredType)) {
+                // System.out.println(node.getLineNum() +" "+ returnedType + " " +
+                // declaredType);
                 errorHandler.register(2, fileName, node.getLineNum(),
                         String.format(
                                 "return type '%s' is not compatible with declared return type "
                                         + "'%s' in method '%s'",
                                 returnedType, declaredType, currentMethod.getName()));
             }
-
             return returnedType;
         } else {
-            return "void";
+            returnedType = "void";
+            // System.out.println(node.getLineNum()+" "+returnedType);
+            if (typeExists(declaredType) && !typesCompatible(returnedType.toString(), declaredType)) {
+                errorHandler.register(2, fileName, node.getLineNum(),
+                        String.format(
+                                "return type '%s' is not compatible with declared return type "
+                                        + "'%s' in method '%s'",
+                                returnedType, declaredType, currentMethod.getName()));
+            }
+            return returnedType;
         }
     }
 
@@ -423,101 +489,160 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(DispatchExpr node) {
-        node.getRefExpr().accept(this);
-        node.getMethodName();
-        var refExpr = ((VarExpr) node.getRefExpr()).getName();
-        String refExprType = null;
-        if (refExpr.equals("this")) {
-            var method = (Method) methodSymbolTable.lookup(currentMethod.getName());
-            refExprType = method.getReturnType();
-            // if (refExprType != null) {
-            if (isPrimitive(refExprType) || isVoid(refExprType)) {
+        var refExprType = node.getRefExpr().accept(this);
+        node.getActualList().accept(this);
+        var refExpr = node.getRefExpr();
+        var name = "";
+
+        // System.out.println(node.getLineNum());
+        if (refExpr instanceof VarExpr) {
+            name = ((VarExpr) refExpr).getName();
+        }
+        // var refExpr = node.getRefExpr().getName();
+        String type = null;
+        // if (isPrimitive(refExprType.toString()) || isVoid(refExprType.toString())) {
+        // errorHandler.register(2, fileName, node.getLineNum(), "can't dispatch on a
+        // primitive or void type");
+        // return "Object";
+        // }
+
+        if (name.equals("this")) {
+            // System.out.println(node.getLineNum()+" this");
+            // System.out.println(node.getLineNum() + " " + node.getMethodName());
+            var method = methodSymbolTable.lookup(node.getMethodName());
+            if (method != null) {
+                var methodNode = (Method) method;
+                type = methodNode.getReturnType();
+
+                var formalListSize = methodNode.getFormalList().getSize();
+                var actualListSize = node.getActualList().getSize();
+                // System.out.println(node.getLineNum() + " " + formalListSize + " " +
+                // actualListSize);
+
+                if (formalListSize != actualListSize) {
+                    errorHandler.register(2, fileName, node.getLineNum(),
+                            String.format(
+                                    "number of actual parameters (%d) differs from number of formal parameters (%d) in dispatch to method '%s'",
+                                    actualListSize,
+                                    formalListSize, node.getMethodName()));
+                }
+
+                String[] formalTypes = new String[actualListSize + 1];
+                int count = 0;
+                for (Iterator it = methodNode.getFormalList().getIterator(); it.hasNext();) {
+                    var formalType = ((Formal) it.next()).getType();
+                    // System.out.println(formalType);
+                    formalTypes[count] = formalType;
+                    count++;
+                }
+                if (isVoid(type)) {
+                    // System.out.println(node.getLineNum());
+                    node.setExprType("void");
+                }
+                int counter = 0;
+                for (Iterator it = node.getActualList().getIterator(); it.hasNext();) {
+                    counter++;
+                    var actualtype = ((Expr) it.next()).getExprType();
+                    if (actualtype.equals("void")) {
+                        errorHandler.register(2, fileName, node.getLineNum(), String.format(
+                                "actual parameter %d in the call to method %s is void and cannot be used within an expression",
+                                counter, node.getMethodName()));
+                    } else if (counter <= formalListSize && !actualtype.equals(formalTypes[counter - 1])) {
+                        // System.out.println(node.getLineNum());
+                        errorHandler.register(2, fileName, node.getLineNum(), String.format(
+                                "actual parameter %d with type '%s' does not match formal parameter %d with declared type '%s' in dispatch to method '%s'",
+                                counter, actualtype.toString(), counter, formalTypes[counter - 1],
+                                node.getMethodName()));
+                    }
+
+                }
+
+            } else {
                 errorHandler.register(2, fileName, node.getLineNum(),
-                        String.format("expression type '%s' of field '%s' cannot be %s", refExprType,
-                                currentField.getName(), refExprType));
-                // node.setExprType("Object");
-                return "Object";
+                        String.format("dispatch to unknown method '%s'", node.getMethodName()));
             }
-            // }
+        } else if (name.equals("super")) {
+            // System.out.println(node.getLineNum());
+        } else {
+            if (refExprType != null && (isPrimitive(refExprType.toString()) || isVoid(refExprType.toString()))) {
+                errorHandler.register(2, fileName, node.getLineNum(), "can't dispatch on a primitive or void type");
+                node.setExprType("Object");
+                // return "Object";
+            }
+            if (classMap.get(refExprType) != null) {
+                var classCTN = classMap.get(refExprType);
+                var classMST = classCTN.getMethodSymbolTable();
+                // System.out.println(classMST);
+                var method = classMST.lookup(node.getMethodName());
+                if (method != null) {
+                    var methodNode = (Method) method;
+                    type = methodNode.getReturnType();
+
+                    var formalListSize = methodNode.getFormalList().getSize();
+                    var actualListSize = node.getActualList().getSize();
+                    // System.out.println(node.getLineNum() + " " + formalListSize + " " +
+                    // actualListSize);
+
+                    if (formalListSize != actualListSize) {
+                        errorHandler.register(2, fileName, node.getLineNum(),
+                                String.format(
+                                        "number of actual parameters (%d) differs from number of formal parameters (%d) in dispatch to method '%s'",
+                                        actualListSize,
+                                        formalListSize, node.getMethodName()));
+                    }
+
+                    String[] formalTypes = new String[actualListSize + 1];
+                    int count = 0;
+                    for (Iterator it = methodNode.getFormalList().getIterator(); it.hasNext();) {
+                        var formalType = ((Formal) it.next()).getType();
+                        // System.out.println(formalType);
+                        formalTypes[count] = formalType;
+                        count++;
+                    }
+                    if (isVoid(type)) {
+                        node.setExprType("void");
+                    }
+                    int counter = 0;
+                    for (Iterator it = node.getActualList().getIterator(); it.hasNext();) {
+                        counter++;
+                        var actualtype = ((Expr) it.next()).getExprType();
+                        if (actualtype.equals("void")) {
+                            errorHandler.register(2, fileName, node.getLineNum(), String.format(
+                                    "actual parameter %d in the call to method %s is void and cannot be used within an expression",
+                                    counter, node.getMethodName()));
+                        } else if (counter <= formalListSize && !actualtype.equals("Object")
+                                && !typesCompatible(actualtype, formalTypes[counter - 1])) {
+                            // System.out.println(node.getLineNum());
+                            errorHandler.register(2, fileName, node.getLineNum(), String.format(
+                                    "actual parameter %d with type '%s' does not match formal parameter %d with declared type '%s' in dispatch to method '%s'",
+                                    counter, actualtype.toString(), counter, formalTypes[counter - 1],
+                                    node.getMethodName()));
+                        } else if (counter <= formalListSize && !typesConform(actualtype, formalTypes[counter - 1])) {
+                            // System.out.println(node.getLineNum());
+                            errorHandler.register(2, fileName, node.getLineNum(), String.format(
+                                    "actual parameter %d with type '%s' does not conform to formal parameter %d with declared type '%s' in dispatch to method '%s'",
+                                    counter, actualtype.toString(), counter, formalTypes[counter - 1],
+                                    node.getMethodName()));
+                        }
+
+                    }
+
+                } else {
+                    errorHandler.register(2, fileName, node.getLineNum(),
+                            String.format("dispatch to unknown method '%s'", node.getMethodName()));
+                }
+            }
+
         }
 
-        // String dispatchClassName;
-        // if (refExprType.endsWith("[]")) {
-        // dispatchClassName = "Object";
+        // System.out.println(node.getLineNum()+" Super");
         // } else {
-        // dispatchClassName = refExprType;
-        // }
-        // var dispatchClassSymbol = classMap.get(dispatchClassName);
-
-        // if (dispatchClassSymbol == null) {
         // errorHandler.register(2, fileName, node.getLineNum(),
-        // String.format("Dispatch on undefined class '%s'", dispatchClassName));
-        // node.setExprType("Object");
-        // return "Object";
+        // String.format("bad reference '%s': fields are 'protected' and can only be
+        // accessed within the class or subclass via 'this' or 'super'", name));
         // }
 
-        // String methodName = node.getMethodName();
-        // var dispatchedMethod = (Method) methodSymbolTable.lookup(dispatchClassName);
-        // if (dispatchedMethod == null) {
-        // errorHandler.register(2, fileName, node.getLineNum(),
-        // String.format("Method '%s' not found in class '%s'",
-        // methodName, dispatchClassName));
-        // node.setExprType("Object");
-        // return "Object";
-        // }
-
-        // node.getActualList().accept(this);
-        // var actualArgs = node.getActualList();
-
-        // var formalParams = dispatchedMethod.getFormalList();
-
-        // if (actualArgs.getSize() != formalParams.getSize()) {
-        // errorHandler.register(2, fileName, node.getLineNum(),
-        // String.format("Method '%s' in class '%s' requires %d arguments, "
-        // + "but %d provided",
-        // methodName, dispatchClassName, formalParams.getSize(),
-        // actualArgs.getSize()));
-        // node.setExprType("Object");
-        // return "Object";
-        // }
-
-        // boolean argsTypesMatch = true;
-        // var actualIter = actualArgs.getIterator();
-        // var formalIter = formalParams.getIterator();
-        // int counter = 0;
-        // while (actualIter.hasNext()) {
-        // counter++;
-        // String actualType = ((Expr) actualIter.next()).getExprType();
-        // String formalType = ((Formal) formalIter.next()).getType();
-
-        // if (actualType.equals("void")) {
-        // errorHandler.register(2, fileName, node.getLineNum(),
-        // String.format("Argument %d for method '%s' in class '%s' has "
-        // + "invalid type 'void'",
-        // counter, methodName, dispatchClassName));
-        // argsTypesMatch = false;
-        // } else if (!actualType.equals(formalType)) {
-        // errorHandler.register(2, fileName, node.getLineNum(),
-        // String.format("Argument %d for method '%s' in class '%s' has "
-        // + "type '%s', but expected '%s'",
-        // counter, methodName, dispatchClassName,
-        // actualType, formalType));
-        // argsTypesMatch = false;
-        // }
-        // }
-
-        // if (!argsTypesMatch) {
-        // node.setExprType("Object");
-        // return "Object";
-        // }
-
-        // String returnType = dispatchedMethod.getReturnType();
-        // node.setExprType(returnType);
-
-        // return returnType;
-        // }
-        // return "";
-        return refExprType;
+        return type;
     }
 
     /**
@@ -527,7 +652,24 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(NewExpr node) {
-        return null;
+        var type = node.getType();
+        if (!typeExists(type)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format("type '%s' of new construction is undefined", type));
+            node.setExprType("Object");
+            return "Object";
+        }
+        if (isPrimitive(type)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format("type '%s' of new construction is primitive and cannot be constructed", type));
+            node.setExprType("Object");
+            return "Object";
+        }
+        // if (classMap.get(type) != null) {
+        // node.setExprType(type);
+        // return type;
+        // }
+        return type;
     }
 
     /**
@@ -548,7 +690,34 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(InstanceofExpr node) {
-        node.getExpr().accept(this);
+        var rhsType = node.getType();
+        var lhsType = node.getExpr().accept(this);
+        boolean valid = true;
+        if (lhsType != null && isPrimitive(lhsType.toString())) {
+            errorHandler.register(2, fileName, node.getLineNum(), String.format(
+                    "the instanceof lefthand expression has type 'int', which is primitive and not an object type",
+                    lhsType));
+        }
+        if (isPrimitive(rhsType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format("the instanceof righthand type '%s' is primitive and not an object type", rhsType));
+        }
+        if (!typeExists(rhsType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format("the instanceof righthand type '%s' is undefined", rhsType));
+
+        }
+        if (lhsType != null && isVoid(lhsType.toString())) {
+            errorHandler.register(2, fileName, node.getLineNum(), String.format(
+                    "the instanceof lefthand expression has type 'int', which is primitive and not an object type",
+                    lhsType));
+            valid = false;
+        }
+
+        if (valid) {
+            node.setExprType("boolean");
+            return "boolean";
+        }
         return null;
     }
 
@@ -559,8 +728,34 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(CastExpr node) {
-        node.getExpr().accept(this);
-        return null;
+        boolean valid = true;
+        var exprType = node.getExpr().accept(this);
+        // figure out logic for up/downcast
+        var targetType = node.getType();
+        // System.out.println(node.getLineNum()+" "+targetType);
+        if (isPrimitive(targetType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format("the target type '%s' is primitive and not an object type", targetType));
+            targetType = "Object";
+        } else if (!isRefType(targetType)) { // this condition is not strong enough
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format("the target type '%s' is undefined", targetType));
+            targetType = "Object";
+        } else if (exprType != null && !typesConform(exprType.toString(), targetType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format("inconvertible types ('%s'=>'%s')", exprType, targetType));
+        }
+        if (exprType != null && isPrimitive(exprType.toString())) {
+            errorHandler.register(2, fileName, node.getLineNum(), String
+                    .format("expression in cast has type '%s', which is primitive and can't be casted", exprType));
+            valid = false;
+        }
+        if (valid) {
+            node.setExprType(targetType);
+            // set boolean flag
+            // node.setUpCast(...);
+        }
+        return targetType;
     }
 
     /**
@@ -570,29 +765,84 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(AssignExpr node) {
-        var rhsType = node.getExpr().accept(this).toString();
-        var refName = node.getRefName();
-        var name = node.getName();
-        var nameType = node.getExprType();
-        if (refName != null) { // im guessing null if a. is absent
-            if (refName.equals("this")) {
-                if (varSymbolTable.peek(name) == null) { // check that b is defined
-                    
+        // System.out.println(node);
+        var rhsType = node.getExpr().accept(this);
+        var a = node.getRefName();
+        var b = node.getName();
+        var lhsType = "";
+        if (a != null) { // im guessing null if a. is absent
+            // System.out.println(node.getLineNum() + "In here");
+            if (a.equals("this")) {
+                // System.out.println(node.getLineNum() + " " + varSymbolTable.toString());
+                var type = varSymbolTable.peek(b);
+                if (type != null) {
+                    lhsType = type.toString();
+                    if (rhsType != null && typesCompatible(rhsType.toString(), lhsType)) {
+                        node.setExprType(rhsType.toString());
+                        return rhsType;
+                    }
+                    if (rhsType != null && !isPrimitive(lhsType) && !isPrimitive(rhsType.toString())
+                            && !typesConform(rhsType.toString(), lhsType)) {
+                        errorHandler.register(2, fileName, node.getLineNum(),
+                                String.format(
+                                        "the righthand type '%s' does not conform to the lefthand type '%s' in assignment",
+                                        rhsType, lhsType));
+                    } else if (rhsType != null && !typesCompatible(rhsType.toString(), lhsType)) {
+                        errorHandler.register(2, fileName, node.getLineNum(),
+                                String.format(
+                                        "the lefthand type '%s' and righthand type '%s' are not compatible in assignment",
+                                        lhsType, rhsType));
+                    }
                 }
-            } else { // for the super
-                if (varSymbolTable.lookup(name) == null && varSymbolTable.getCurrScopeLevel() != varSymbolTable.getScopeLevel(name)) {
-
+            } else if (a.equals("super")) { // for the super
+                var currentClass = classMap.get(className);
+                var currentClassParent = currentClass.getParent();
+                var superSymbolTable = currentClassParent.getVarSymbolTable();
+                var type = superSymbolTable.peek(b);
+                if (type != null) {
+                    lhsType = type.toString();
+                    if (rhsType != null && typesCompatible(rhsType.toString(), lhsType)) {
+                        node.setExprType(rhsType.toString());
+                        return rhsType;
+                    }
+                    if (rhsType != null && !isPrimitive(lhsType) && !isPrimitive(rhsType.toString())
+                            && !typesConform(rhsType.toString(), lhsType)) {
+                        errorHandler.register(2, fileName, node.getLineNum(),
+                                String.format(
+                                        "the righthand type '%s' does not conform to the lefthand type '%s' in assignment",
+                                        rhsType, lhsType));
+                    } else if (rhsType != null && !typesCompatible(rhsType.toString(), lhsType)) {
+                        errorHandler.register(2, fileName, node.getLineNum(),
+                                String.format(
+                                        "the lefthand type '%s' and righthand type '%s' are not compatible in assignment",
+                                        lhsType, rhsType));
+                    }
                 }
+            } else {
+                errorHandler.register(2, fileName, node.getLineNum(), String.format(
+                        "bad reference '%s': fields are 'protected' and can only be accessed within the class or subclass via 'this' or 'super'",
+                        a));
             }
-        } 
-        // if (isVoid(rhsType)) { // should record an
-
-        // }
-        // Thread.dumpStack();
-        // System.out.println("rhs: "+rhsType + " lhs:" + nameType);
-        if (typesCompatible(rhsType, nameType)) {
-            node.setExprType(rhsType);
-            return rhsType;
+        }
+        // System.out.println(node.getLineNum() + " " + varSymbolTable.toString());
+        var type = methodSymbolTable.peek(b);
+        if (type != null && rhsType != null) {
+            lhsType = type.toString();
+            if (typesCompatible(rhsType.toString(), lhsType)) {
+                node.setExprType(rhsType.toString());
+                return rhsType;
+            }
+            if (!isPrimitive(lhsType) && !isPrimitive(rhsType.toString())
+                    && !typesConform(rhsType.toString(), lhsType)) {
+                errorHandler.register(2, fileName, node.getLineNum(),
+                        String.format(
+                                "the righthand type '%s' does not conform to the lefthand type '%s' in assignment",
+                                rhsType, lhsType));
+            } else if (!typesCompatible(rhsType.toString(), lhsType)) {
+                errorHandler.register(2, fileName, node.getLineNum(),
+                        String.format("the lefthand type '%s' and righthand type '%s' are not compatible in assignment",
+                                lhsType, rhsType));
+            }
         }
         return null;
     }
@@ -616,9 +866,22 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(BinaryCompEqExpr node) {
-        node.getLeftExpr().accept(this);
-        node.getRightExpr().accept(this);
-        return null;
+        // System.out.println(node.getLineNum());
+        var lhsType = node.getLeftExpr().accept(this);
+        var rhsType = node.getRightExpr().accept(this);
+        if (lhsType != null && rhsType != null) {
+            if (isPrimitive(rhsType.toString()) || isPrimitive(lhsType.toString())) {
+                if (!typesCompatible(rhsType.toString(), lhsType.toString())) {
+                    errorHandler.register(2, fileName, node.getLineNum(),
+                            String.format(
+                                    "the lefthand type '%s' in the binary operation ('%s') "
+                                            + "does not match the righthand type '%s'",
+                                    lhsType, node.getOpName(), rhsType));
+                }
+            }
+        }
+        node.setExprType("boolean");
+        return "boolean";
     }
 
     /**
@@ -628,9 +891,22 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(BinaryCompNeExpr node) {
-        node.getLeftExpr().accept(this);
-        node.getRightExpr().accept(this);
-        return null;
+        // System.out.println(node.getLineNum());
+        var lhsType = node.getLeftExpr().accept(this);
+        var rhsType = node.getRightExpr().accept(this);
+        if (lhsType != null && rhsType != null) {
+            if (isPrimitive(rhsType.toString()) || isPrimitive(lhsType.toString())) {
+                if (!typesCompatible(rhsType.toString(), lhsType.toString())) {
+                    errorHandler.register(2, fileName, node.getLineNum(),
+                            String.format(
+                                    "the lefthand type '%s' in the binary operation ('%s') "
+                                            + "does not match the righthand type '%s'",
+                                    lhsType, node.getOpName(), rhsType));
+                }
+            }
+        }
+        node.setExprType("boolean");
+        return "boolean";
     }
 
     /**
@@ -688,9 +964,27 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(BinaryArithPlusExpr node) {
-        node.getLeftExpr().accept(this);
-        node.getRightExpr().accept(this);
-        return null;
+        // System.out.println(node.getLineNum());
+        var lhsType = node.getLeftExpr().accept(this);
+        var rhsType = node.getRightExpr().accept(this);
+        var operandType = node.getOperandType();
+        if (lhsType != null && !lhsType.equals(operandType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format(
+                            "the lefthand type '%s' in the binary operation ('%s') is "
+                                    + "incorrect; should have been: %s",
+                            lhsType, node.getOpName(), node.getOpType()));
+        }
+        if (rhsType != null && !rhsType.equals(operandType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format(
+                            "the righthand type '%s' in the binary operation ('%s') is "
+                                    + "incorrect; should have been: %s",
+                            rhsType, node.getOpName(), node.getOpType()));
+        }
+        var operatorType = node.getOpType();
+        node.setExprType(operatorType);
+        return operatorType;
     }
 
     /**
@@ -700,9 +994,27 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(BinaryArithMinusExpr node) {
-        node.getLeftExpr().accept(this);
-        node.getRightExpr().accept(this);
-        return null;
+        // System.out.println(node.getLineNum());
+        var lhsType = node.getLeftExpr().accept(this);
+        var rhsType = node.getRightExpr().accept(this);
+        var operandType = node.getOperandType();
+        if (lhsType != null && !lhsType.equals(operandType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format(
+                            "the lefthand type '%s' in the binary operation ('%s') is "
+                                    + "incorrect; should have been: %s",
+                            lhsType, node.getOpName(), node.getOpType()));
+        }
+        if (rhsType != null && !rhsType.equals(operandType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format(
+                            "the righthand type '%s' in the binary operation ('%s') is "
+                                    + "incorrect; should have been: %s",
+                            rhsType, node.getOpName(), node.getOpType()));
+        }
+        var operatorType = node.getOpType();
+        node.setExprType(operatorType);
+        return operatorType;
     }
 
     /**
@@ -712,9 +1024,27 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(BinaryArithTimesExpr node) {
-        node.getLeftExpr().accept(this);
-        node.getRightExpr().accept(this);
-        return null;
+        // System.out.println(node.getLineNum());
+        var lhsType = node.getLeftExpr().accept(this);
+        var rhsType = node.getRightExpr().accept(this);
+        var operandType = node.getOperandType();
+        if (lhsType != null && !lhsType.equals(operandType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format(
+                            "the lefthand type '%s' in the binary operation ('%s') is "
+                                    + "incorrect; should have been: %s",
+                            lhsType, node.getOpName(), node.getOpType()));
+        }
+        if (rhsType != null && !rhsType.equals(operandType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format(
+                            "the righthand type '%s' in the binary operation ('%s') is "
+                                    + "incorrect; should have been: %s",
+                            rhsType, node.getOpName(), node.getOpType()));
+        }
+        var operatorType = node.getOpType();
+        node.setExprType(operatorType);
+        return operatorType;
     }
 
     /**
@@ -724,9 +1054,27 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(BinaryArithDivideExpr node) {
-        node.getLeftExpr().accept(this);
-        node.getRightExpr().accept(this);
-        return null;
+        // System.out.println(node.getLineNum());
+        var lhsType = node.getLeftExpr().accept(this);
+        var rhsType = node.getRightExpr().accept(this);
+        var operandType = node.getOperandType();
+        if (lhsType != null && !lhsType.equals(operandType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format(
+                            "the lefthand type '%s' in the binary operation ('%s') is "
+                                    + "incorrect; should have been: %s",
+                            lhsType, node.getOpName(), node.getOpType()));
+        }
+        if (rhsType != null && !rhsType.equals(operandType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format(
+                            "the righthand type '%s' in the binary operation ('%s') is "
+                                    + "incorrect; should have been: %s",
+                            rhsType, node.getOpName(), node.getOpType()));
+        }
+        var operatorType = node.getOpType();
+        node.setExprType(operatorType);
+        return operatorType;
     }
 
     /**
@@ -736,9 +1084,27 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(BinaryArithModulusExpr node) {
-        node.getLeftExpr().accept(this);
-        node.getRightExpr().accept(this);
-        return null;
+        // System.out.println(node.getLineNum());
+        var lhsType = node.getLeftExpr().accept(this);
+        var rhsType = node.getRightExpr().accept(this);
+        var operandType = node.getOperandType();
+        if (lhsType != null && !lhsType.equals(operandType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format(
+                            "the lefthand type '%s' in the binary operation ('%s') is "
+                                    + "incorrect; should have been: %s",
+                            lhsType, node.getOpName(), node.getOpType()));
+        }
+        if (rhsType != null && !rhsType.equals(operandType)) {
+            errorHandler.register(2, fileName, node.getLineNum(),
+                    String.format(
+                            "the righthand type '%s' in the binary operation ('%s') is "
+                                    + "incorrect; should have been: %s",
+                            rhsType, node.getOpName(), node.getOpType()));
+        }
+        var operatorType = node.getOpType();
+        node.setExprType(operatorType);
+        return operatorType;
     }
 
     /**
@@ -760,9 +1126,19 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(BinaryLogicOrExpr node) {
-        node.getLeftExpr().accept(this);
-        node.getRightExpr().accept(this);
-        return null;
+        var lhsType = node.getLeftExpr().accept(this);
+        var rhsType = node.getRightExpr().accept(this);
+        var operandType = node.getOperandType();
+
+        if (lhsType != null && !lhsType.equals(operandType)) {
+
+        }
+        if (rhsType != null && !rhsType.equals(operandType)) {
+
+        }
+        var operatorType = node.getOpType();
+        node.setExprType(operatorType);
+        return operatorType;
     }
 
     /**
@@ -772,10 +1148,10 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(UnaryNegExpr node) {
-        Object value = node.getExpr().accept(this);
-        String exprType = value.toString();
-        if (exprType.equals(node.getOperandType())) {
-            node.setExprType(exprType);
+        Object exprType = node.getExpr().accept(this);
+        // exprType = value.toString();
+        if (exprType != null && exprType.equals(node.getOperandType())) {
+            node.setExprType(exprType.toString());
             return exprType;
         } else {
             errorHandler.register(2, fileName, node.getLineNum(),
@@ -794,10 +1170,9 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(UnaryNotExpr node) {
-        Object value = node.getExpr().accept(this);
-        String exprType = value.toString();
-        if (exprType.equals(node.getOperandType())) {
-            node.setExprType(exprType);
+        var exprType = node.getExpr().accept(this);
+        if (exprType != null && exprType.equals(node.getOperandType())) {
+            node.setExprType(exprType.toString());
             return exprType;
         } else {
             errorHandler.register(2, fileName, node.getLineNum(),
@@ -838,7 +1213,8 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit (the type of the variable expression)
      */
     public Object visit(VarExpr node) {
-        
+        // System.out.println(node);
+        // System.out.println(node.getLineNum()+" "+ node.getRef());
         var varName = node.getName();
         var ref = node.getRef();
         // System.out.println(varSymbolTable.toString());
@@ -865,21 +1241,25 @@ public class TypeCheckVisitor extends SemanticVisitor {
             } else if (varName.equals("null")) {
                 return null;
             } else {
-                // System.out.println("Name: " +node.getName()+" node exprType: "+node.getExprType());
-                var type = varSymbolTable.peek(varName).toString();
-                
+                // System.out.println("Name: " +node.getName()+" node exprType:
+                // "+node.getExprType());
+                // System.out.println(node.getLineNum() + " " + methodSymbolTable.toString());
+                var type = methodSymbolTable.peek(varName);
+
                 // System.out.println(node.getName());
                 // System.out.println(type);
                 // System.out.println("This should be boolean at last: "+type);
-                if (typeExists(type)) {
-                    System.out.println("Im here " + type);
-                    node.setExprType(type);
-                    return type;
-                } else {
-                    node.setExprType("Object");
-                    return "Object";
+                if (type != null) {
+                    if (typeExists(type.toString())) {
+                        // System.out.println("Im here " + type);
+                        node.setExprType(type.toString());
+                        return type;
+                    } else {
+                        node.setExprType("Object");
+                        return "Object";
+                    }
                 }
-
+                return type;
             }
         }
     }
@@ -934,7 +1314,8 @@ public class TypeCheckVisitor extends SemanticVisitor {
      * @return result of the visit
      */
     public Object visit(ConstBooleanExpr node) {
-        // System.out.println(className +" "+ currentMethod.getName() + ": " + node.getConstant());
+        // System.out.println(className +" "+ currentMethod.getName() + ": " +
+        // node.getConstant());
         node.setExprType("boolean");
         // System.out.println(className+" "+node.getConstant()+" "+node.getExprType());
         return "boolean";
@@ -967,6 +1348,27 @@ public class TypeCheckVisitor extends SemanticVisitor {
         return false;
     }
 
+    private boolean typesConform(String actualType, String expectedType) {
+        if (typesCompatible(actualType, expectedType)) {
+            return true;
+        }
+
+        if (expectedType.equals("Object") && (isRefType(actualType) || actualType == null)) {
+            return true;
+        }
+
+        if (isRefType(expectedType) && actualType == null) {
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isRefType(String type) {
+        if (classMap.get(type) != null)
+            return true;
+        return false;
+    }
+
     private boolean isPrimitive(String type) {
         // System.out.println(type);
         if (type.equals("int") || type.equals("boolean")) {
@@ -987,30 +1389,16 @@ public class TypeCheckVisitor extends SemanticVisitor {
             if (isPrimitive(type)) {
                 return true;
             }
-    
+
             if (type.equals("int[]") || type.equals("boolean[]")) {
                 return true;
             }
-    
+
             if (classMap.get(type) != null) {
                 return true;
             }
         }
-        // if (isPrimitive(type)) {
-        //     return true;
-        // }
-
-        // if (type.equals("int[]") || type.equals("boolean[]")) {
-        //     return true;
-        // }
-
-        // if (classMap.get(type) != null) {
-        //     return true;
-        // }
-
         return false;
     }
 
 }
-
-    
