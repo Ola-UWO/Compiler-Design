@@ -291,6 +291,7 @@ public class TypeCheckVisitor extends SemanticVisitor {
                             returnedType, node.getName(), type));
             // validVar = false;
         } else {
+            // System.out.println("Hello");
             if (!type.equals(returnedType)) {
                 errorHandler.register(
                         2, fileName, node.getLineNum(),
