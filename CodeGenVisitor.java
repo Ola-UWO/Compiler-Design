@@ -9,14 +9,21 @@ import java.io.*;
 public class CodeGenVisitor extends Visitor {
 
     StringBuffer sourceCode = new StringBuffer();
+    StringBuffer fieldBuffer = new StringBuffer();
     StringBuffer methodBuffer = new StringBuffer();
     StringBuffer stmtBuffer = new StringBuffer();
-    StringBuffer fieldBuffer = new StringBuffer();
+    StringBuffer exprBuffer = new StringBuffer();
+    ArrayList<String> args = new ArrayList<>();
     boolean hasConstructor = false;
     boolean hasReturn = false;
-    int stack = 0;
+    int stackSize = 0;
     int locals = 1;
+    String fileName;
     String className;
+    String parentName;
+    ArrayList<Integer> stack = new ArrayList<>();
+
+
 
     /**
      * Visit a class node
@@ -28,11 +35,13 @@ public class CodeGenVisitor extends Visitor {
         sourceCode.setLength(0); // reset for new class
         methodBuffer.setLength(0);
         fieldBuffer.setLength(0);
-        String className = node.getName();
+        fileName = node.getFilename();
+        className = node.getName();
+        parentName = node.getParent();
         // header
         sourceCode.append(
-                String.format(".source %s.btm%n.class protected %s%n.super %s%n.implements java/lang/Cloneable%n%n",
-                        className, className, builtInDescriptors(node.getParent())));
+                String.format(".source %s%n.class protected %s%n.super %s%n.implements java/lang/Cloneable%n%n",
+                        fileName, className, builtInDescriptors(parentName)));
         node.getMemberList().accept(this);
         writeToFile(className + ".j");
         return null;
@@ -82,7 +91,7 @@ public class CodeGenVisitor extends Visitor {
         // header
         // node.
         if (!hasConstructor) { // subclassing user def classes not implemented yet
-            methodBuffer.append(defualtConstructor());
+            methodBuffer.append(defaultConstructor());
         }
         methodBuffer.append(boilerPlateMain());
         methodBuffer.append(
@@ -91,8 +100,9 @@ public class CodeGenVisitor extends Visitor {
         methodBuffer.append(
                 String.format(")%s%n", builtInDescriptors(node.getReturnType())));
         node.getStmtList().accept(this);
-        methodBuffer.append(String.format("    .limit stack %d%n    .limit locals %d%n", stack, locals)); 
-        stack = 0; // reset counters 
+        methodBuffer.append(String.format("    .limit stack %d%n    .limit locals %d%n", calculateStackHeight(), locals)); 
+        stack = new ArrayList<Integer>(); // reset counters
+        stackSize = 0; 
         locals = 0;
         methodBuffer.append(stmtBuffer);
         if (!hasReturn) {
@@ -141,6 +151,7 @@ public class CodeGenVisitor extends Visitor {
      * @return result of the visit
      */
     public Object visit(DeclStmt node) {
+
         node.getInit().accept(this);
         return null;
     }
@@ -243,8 +254,11 @@ public class CodeGenVisitor extends Visitor {
      * @return result of the visit
      */
     public Object visit(ExprList node) {
-        for (Iterator it = node.getIterator(); it.hasNext();)
-            ((Expr) it.next()).accept(this);
+        for (Iterator it = node.getIterator(); it.hasNext();) {
+            var expr = (Expr) it.next();
+            args.add(expr.getExprType());
+            expr.accept(this);
+        }
         return null;
     }
 
@@ -255,8 +269,18 @@ public class CodeGenVisitor extends Visitor {
      * @return result of the visit
      */
     public Object visit(DispatchExpr node) {
-        node.getRefExpr().accept(this);
+        
+        var refExpr = node.getRefExpr();
+        refExpr.accept(this);
+        System.out.println(refExpr);
+        var type = refExpr.getExprType();
+        System.out.println(type);
         node.getActualList().accept(this);
+        stmtBuffer.append(exprBuffer);
+        stmtBuffer.append(
+            String.format("    invokevirtual %s/%s(%s)%s%n", type, node.getMethodName(), getArgTypes(), builtInDescriptors(node.getExprType()))
+        );
+        // exprBuffer.setLength(0); // clean exprBuffer
         return null;
     }
 
@@ -267,6 +291,14 @@ public class CodeGenVisitor extends Visitor {
      * @return result of the visit
      */
     public Object visit(NewExpr node) {
+        stackSize+=2;
+        var type = node.getType();
+        stack.add(stackSize);
+        exprBuffer.append(
+            String.format("    new %s%n    dup%n    invokespecial %s/<init>()V%n", type, type)
+        );
+        stackSize--;
+        stack.add(stackSize);
         return null;
     }
 
@@ -578,11 +610,16 @@ public class CodeGenVisitor extends Visitor {
      * @return result of the visit
      */
     public Object visit(ConstStringExpr node) {
+        stackSize++;
+        stack.add(stackSize);
+        exprBuffer.append(
+            String.format("    ldc \"%s\"%n", node.getConstant())
+        );
         return null;
     }
 
     public void writeToFile(String fileName) {
-        // fileName =  "/Users/ola/Downloads/a5/src/codegenjvm/" + fileName;
+        fileName =  "/Users/ola/Downloads/a5/src/codegenjvm/" + fileName;
         sourceCode.append(fieldBuffer);
         sourceCode.append(methodBuffer);
         try (var pw = new PrintStream(new FileOutputStream(fileName), true)) {
@@ -610,25 +647,34 @@ public class CodeGenVisitor extends Visitor {
         switch (type) {
             case "Object":
                 return "java/lang/Object";
-            case "TextIO":
-                return "java/io/TextIO";
-            case "Sys":
-                return "java/lang/Sys";
             case "String":
-                return "java/lang/String";
+                return "Ljava/lang/String;";
             default:
                 return descriptors(type);
         }
     }
+    public String fullFileName(String type) {
+        switch (type) {
+            case "Object":
+                return "java/lang/Object";
+            // case "TextIO":
+            //     return "TextIO";
+            // case "Sys":
+            //     return "Sys";
+            case "String":
+                return "java/lang/String";
+            default: return "";
+        }
+    }
 
-    public String defualtConstructor() {
+    public String defaultConstructor() {
         return String.format(
-                ".method protected <init>()V%n    .limit stack 1%n    .limit locals 1%n    aload_0%n    invokespecial java/lang/Object/<init>()V%n    return%n.end method%n%n");
+                ".method protected <init>()V%n    .limit stack 1%n    .limit locals 1%n    aload_0%n    invokespecial %s/<init>()V%n    return%n.end method%n%n", builtInDescriptors(parentName));
     }
 
     public String boilerPlateMain() {
         return String.format(
-            ".method static public main([Ljava/lang/String;)V%n    .limit stack 2%n    .limit locals 2%n    new Main%n    dup%n    invokespecial Main/<init>()V%n    invokevirtual Main/main()V%n    return%n.end method%n%n");
+            ".method static public main([Ljava/lang/String;)V%n.throws java/lang/CloneNotSupportedException%n    .limit stack 2%n    .limit locals 1%n    new %s%n    dup%n    invokespecial %s/<init>()V%n    invokevirtual %s/main()V%n    return%n.end method%n%n", className, className, className);
     }
     public String returnByteCodes(String type) {
         switch (type) {
@@ -639,4 +685,21 @@ public class CodeGenVisitor extends Visitor {
                 return "a";
         }
     }
+    public int calculateStackHeight() {
+        int max = 0;
+        for (Integer integer : stack) {
+            if (integer > max) {
+                max = integer;
+            }
+        }
+        return max;
+    }
+    public String getArgTypes() {
+        String argList = "";
+        for(String arg : args) {
+            argList += builtInDescriptors(arg);
+        }
+        return argList;
+    } 
 }
+
